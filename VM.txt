@@ -1,0 +1,232 @@
+
+
+
+sudo apt update
+sudo apt install python3-venv python3-dev libpq-dev postgresql postgresql-contrib nginx curl
+
+nano /etc/sudoers
+toto ALL=(ALL:ALL) ALL
+
+sudo -u postgres psql
+CREATE DATABASE filmographie;
+CREATE USER toto WITH PASSWORD 'toto';
+
+ALTER ROLE toto SET client_encoding TO 'utf8';
+ALTER ROLE toto SET default_transaction_isolation TO 'read committed';
+ALTER ROLE toto SET timezone TO 'UTC';
+
+GRANT ALL PRIVILEGES ON DATABASE myproject filmographie TO toto;
+\q
+
+
+mkdir ~/filmographie
+cd ~/filmographie
+
+python3 -m venv filmographie
+source filmographie/bin/activate
+pip install django gunicorn psycopg2-binary
+
+django-admin startproject Filmographie ~/filmographie 
+nano ~/Filmographie/filmographie /settings.py
+		
+(DANS NANO)
+
+. . .
+ALLOWED_HOSTS = ['localhost']
+
+
+. . .
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql_psycopg2',
+        'NAME': 'Filmographie',
+        'USER': 'toto',
+        'PASSWORD': 'toto',
+        'HOST': 'localhost',
+        'PORT': '',
+    }
+}
+
+. . .
+
+
+. . .
+STATIC_URL = 'static/'
+
+# Default primary key field type
+# https://docs.djangoproject.com/en/4.0/ref/settings/#default-auto-field
+
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+import os
+STATIC_ROOT = os.path.join(BASE_DIR, 'static/')
+
+Ctrl+X
+
+
+~/filmographie/manage.py makemigrations
+~/filmographie/manage.py migrate
+
+(IL fAUT DONNER TOUT LES DROITS A TOTO POUR LA TABLE SI LES COMMANDES AU DESSUS NE FONCTIONNENT PAS)
+(FAIRE COMME SUIT en utilisateur simple)
+sudo -u postgres psql
+toto
+GRANT ALL PRIVILEGES ON DATABASE filmographie TO toto;
+GRANT ALL PRIVILEGES ON SCHEMA public TO toto;
+ALTER DATABASE filmographie OWNER TO toto;
+\q
+cd ~/filmographie
+source filmographie/bin/activate
+python manage.py makemigrations
+python manage.py migrate
+
+
+(PUIS ON REPREND A LA SUITE)
+
+python manage.py createsuperuser
+python manage.py runserver
+(visiter le lien)
+python manage.py collectstatic
+
+
+
+(de nouveau en utilisateur simple)
+
+su -
+toto
+apt update
+apt install ufw
+sudo ufw enable
+sudo ufw status
+exit 
+
+
+(de nouveau en utilisateur simple)
+
+sudo ufw allow 8000
+cd ~/filmographie
+source filmographie/bin/activate
+python manage.py runserver 0.0.0.0:8000
+
+
+nano ~/filmographie/Filmographie/settings.py
+(dans la rubrique ALLOWED_HOSTS)
+ALLOWED_HOSTS = ['0.0.0.0', 'localhost', '127.0.0.1']
+
+
+(Dans le navigateur)
+http://0.0.0.0:8000/
+http://0.0.0.0:8000/admin
+username : toto
+username : toto
+(on peut explorer l'interface django en admin)
+
+(dans le cli on tape la commande suivante pour desactiver l'environnement virtuel)
+deactivate
+
+
+(ON PASSE A LA PARTIE GUNICORN)
+
+sudo nano /etc/systemd/system/gunicorn.service
+
+[Unit]
+Description=gunicorn socket
+
+[Socket]
+ListenStream=/run/gunicorn.sock
+
+[Install]
+WantedBy=sockets.target
+
+(crtl X, Y, enter)
+
+
+sudo nano /etc/systemd/system/gunicorn.service
+
+[Unit]
+Description=gunicorn daemon
+Requires=gunicorn.socket
+After=network.target
+
+[Service]
+User=toto
+Group=www-data
+WorkingDirectory=/home/toto/filmographie
+ExecStart=/home/toto/filmographie/filmographie/bin/gunicorn \
+          --access-logfile - \
+          --workers 3 \
+          --bind unix:/run/gunicorn.sock \
+          Filmographie.wsgi
+
+[Install]
+WantedBy=multi-user.target
+
+(crtl X, Y, enter)
+
+sudo systemctl start gunicorn.socket
+sudo systemctl enable gunicorn.socket
+sudo systemctl status gunicorn.socket
+(le status dois etre active)
+
+file /run/gunicorn.sock
+sudo journalctl -u gunicorn.socket
+sudo systemctl status gunicorn
+(le status doit etre inactive)
+
+curl --unix-socket /run/gunicorn.sock localhost
+(You should receive the HTML output from your application in the terminal)
+
+sudo systemctl status gunicorn
+sudo journalctl -u gunicorn
+
+sudo systemctl daemon-reload
+sudo systemctl restart gunicorn
+
+
+(ON PASSE A LA PARTIE NGINX)
+
+sudo nano /etc/nginx/sites-available/myproject
+
+server {
+    listen 80;
+    server_name localhost;
+
+    location = /favicon.ico { access_log off; log_not_found off; }
+
+    location /static/ {
+        root /home/toto/filmographie;
+    }
+
+    location / {
+        include proxy_params;
+        proxy_pass http://unix:/run/gunicorn.sock;
+    }
+}
+
+(crtl X, Y, enter)
+
+sudo ln -s /etc/nginx/sites-available/myproject /etc/nginx/sites-enabled
+sudo nginx -t
+sudo systemctl restart nginx
+
+sudo ufw delete allow 8000
+sudo ufw allow 'Nginx Full'
+
+
+(maintenant on peut acceder au serveur sans probleme en passanr par nginx)
+
+
+
+Conclusion
+
+In this guide, you set up a Django project in its own virtual environment. 
+You configured Gunicorn to translate client requests so that Django can handle them. Afterwards, 
+you set up Nginx to act as a reverse proxy to handle client connections and serve the correct project depending on the client request.
+
+Django helps create projects and applications by providing many of the common pieces, 
+allowing you to focus on the unique elements. By leveraging the general tool chain described in this article, 
+you can serve the applications you create from a single server.
+
+
+
